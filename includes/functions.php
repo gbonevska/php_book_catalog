@@ -1,5 +1,5 @@
 ﻿<?php
-	$db = new mysqli("localhost", "ggbuchen_biblio", "211300", "ggbuchen_katalog_knigi");
+	$db = new mysqli("localhost", "", "", "ggbuchen_katalog_knigi");
 	if ($db->connect_errno) {
 		echo "Failed to connect to MySQL: (" . $db->connect_errno . ") " . $db->connect_error;
 	}
