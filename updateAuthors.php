@@ -2,10 +2,7 @@
 mb_internal_encoding('UTF-8');
 $pageTitle = 'Редактиране на автор';
 include 'includes/header.php';
-?>
-<a href="index.php"> Към общия списък с книги и автори </a>
-<p>Редактиране на автор:</p>
-<?php 
+
 	if (isset($_GET['update_author'])) {
 		$authorId = (int) $_GET['update_author'];
 		$authorOldName = returnAuthorNameById($db, $authorId);
@@ -31,6 +28,7 @@ include 'includes/header.php';
 		}	
 	}
 ?>
+<p>Редактиране на автор:</p>
 <form method="POST">
     <div>Име на автор:
 	     <input type="text" name="authorName" value="<?php echo $authorOldName; ?>"/>

@@ -2,8 +2,23 @@
 mb_internal_encoding('UTF-8');
 $pageTitle = 'Въвеждане на нов автор';
 include 'includes/header.php';
-?>
-<?php 
+
+	if (isset($_GET['delete_author'])) {
+		$authorId =  $_GET['delete_author'];
+		$relatedBooks = findBooksByAuthor($db, $authorId);
+		
+		if($relatedBooks > 0 ) {
+			echo "Този автор не може да бъде изтрит. Има въведени книги с този автор.";
+		} else {
+			if(deleteAuthors($db, $authorId) === false) {
+				echo "Грешка при изтриване на автор.";
+			} else {
+				echo "Успешно изтриване на автор.";
+			}
+		}
+		
+	}
+	
 	if($_POST){
 			
 		//check inputted author name
@@ -27,7 +42,6 @@ include 'includes/header.php';
 		}	
 	}
 ?>
-<a href="index.php"> Към общия списък с книги и автори </a>
 <p>Въвеждане на нов автор:</p>
 <form method="POST">
     <div>Име на нов автор:
@@ -39,16 +53,17 @@ include 'includes/header.php';
 <table border = "1">
 	<tr>
 		<th>Автори</th>
-		<th></th>
+		<th>--------</th>
+		<th>--------</th>
 	</tr>
 	<?php
 		$authors = array();
 		$authors = selectAllAuthors($db);
 		if (!($authors === false)) {
 			foreach($authors as $key => $author) {
-				//echo '<tr><td><a href="index.php?author_id=' . $key . '> ' . $author . ' </a></td></tr>' ;
 				echo '<tr><td> ' . $author . ' </td>' ;
-				echo '<td><a href="updateAuthors.php?update_author=' . $key . '"> Редактирай </a></td></tr>'; 
+				echo '<td><a href="updateAuthors.php?update_author=' . $key . '"> Редактирай </a></td>';
+				echo '<td><a href="authors.php?delete_author=' .  $key . '">Изтрий</a></td></tr>';
 			}
 		}
 	?>

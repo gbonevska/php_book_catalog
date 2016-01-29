@@ -2,29 +2,25 @@
 mb_internal_encoding('UTF-8');
 $pageTitle = 'Въвеждане на нова колекция';
 include 'includes/header.php';
-?>
-<?php 
-	if($_POST){
-			
-		//check inputted author name
-		$collectionName = $db->real_escape_string(trim($_POST['collectionName']));
-		$errMsg = array();
-		//$errMsg = validateInputtedValue($db, $collectionName, 'collectionName');
-		
-		if (count($errMsg)>0) {    
-			foreach($errMsg as $err) {
-				echo $err . '</ br>';
-			}
+
+	if (isset($_GET['delete_collection'])) {
+		$collectionId =  $_GET['delete_collection'];
+		if(deleteCollection($db, $collectionId) === false) {
+			echo "Грешка при изтриване на колекция.";
+		} else {
+			echo "Успешно изтриване на колекцията.";
 		}
-		else {
-			$newCollectionId = insertCollectionByName($db, $collectionName);
-			if ($newCollectionId === false) {
-				echo 'Грешка при въвеждане на колекция!';
-			}
-		}	
+		
 	}
+	if($_POST){	
+		$collectionName = $db->real_escape_string(trim($_POST['collectionName']));
+
+		$newCollectionId = insertCollectionByName($db, $collectionName);
+		if ($newCollectionId === false) {
+			echo 'Грешка при въвеждане на колекция!';
+		}
+	}	
 ?>
-<a href="index.php"> Към общия списък с книги и автори </a>
 <p>Въвеждане на нова колекция:</p>
 <form method="POST">
     <div>Име на нова колекция:
@@ -36,15 +32,17 @@ include 'includes/header.php';
 <table border = "1">
 	<tr>
 		<th>Колекции</th>
-		<th>Редакция</th>
+		<th>-------</th>
+		<th>-------</th>
 	</tr>
 	<?php
 		$collections = array();
 		$collections = selectAllCollections($db);
 		if (!($collections === false)) {
 			foreach($collections as $key => $collection) {
-				echo '<tr><td>' . $collection . ' </td>' ;
-				echo '<td><a href="updateCollections.php?update_collection=' . $key . '"> Редактирай </a></td></tr>'; 
+				echo '<tr><td>' . $collection . ' </td>
+				      <td><a href="updateCollections.php?update_collection=' . $key . '"> Редактирай </a></td>
+					  <td><a href="collections.php?delete_collection=' .  $key . '">Изтрий</a></td></tr>'; 
 			}
 		}
 	?>

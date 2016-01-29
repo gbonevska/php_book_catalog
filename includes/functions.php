@@ -1,5 +1,5 @@
 ﻿<?php
-	$db = new mysqli("localhost", "root", "", "Karlovo_books");
+	$db = new mysqli("localhost", "ggbuchen_biblio", "211300", "ggbuchen_katalog_knigi");
 	if ($db->connect_errno) {
 		echo "Failed to connect to MySQL: (" . $db->connect_errno . ") " . $db->connect_error;
 	}
@@ -8,12 +8,76 @@
 		printf("Error loading character set utf8: %s\n", $db->error);
 	}
 	
+	//$TEST = false;
+	
+	/* select book data from tables books,
+	* input parameters $db - connection, $bookId - id from table books
+	* return array with book's details = title, notes, authors, collections
+	* return false if any errors
+	*/
+	function selectBookDetails($db, $bookId) {
+		if ($bookId < 0) {
+			return false;
+		}
+
+		if (!($stmtSelectBooksDetails = $db->prepare(' SELECT DISTINCT b.book_title, 
+			                                                       a.author_name, 
+			                                                       a.author_id, 
+			                                                       ba.collection_id,
+			                                                       c.collection_name,
+			                                                       b.notes
+			                                                  FROM books_authors as ba
+													    INNER JOIN books as b
+														        ON ba.book_id = b.book_id
+														INNER JOIN books_authors as bba
+														 	    ON bba.book_id = ba.book_id
+														INNER JOIN authors as a
+															    ON bba.author_id = a.author_id 
+														LEFT OUTER JOIN collections c
+                                                                ON c.collection_id = ba.collection_id
+														WHERE b.book_id = '.$bookId.'
+														ORDER BY b.book_title, a.author_name'))) {
+			//echo ($GLOBALS[$TEST] ? ' Prepare select failed: (' . $db->errno . ' ) ' . $db->error : '');
+			return false;
+		}
+		
+		if (!$stmtSelectBooksDetails->execute()) {
+			echo ' Execute select failed: (' . $stmtSelectBooksDetails->errno . ' ) ' . $stmtSelectBooksDetails->error;
+			return false;
+		}
+		
+		// store result
+		$stmtSelectBooksDetails->store_result();
+		
+		// bind result variables 
+		$stmtSelectBooksDetails->bind_result($bookName, $authorName, $authorId, 
+			                                 $collectionId, $collectionName, $bookNotes);
+		
+		// fetch values
+		$bookDetails = array();
+		if($stmtSelectBooksDetails->num_rows > 0) {
+			while ($row = $stmtSelectBooksDetails->fetch()) {
+				$bookDetails['bookName'] = $bookName;
+				$bookDetails['authors'][$authorId] = $authorName;
+				$bookDetails['collectionName'][$collectionId] = $collectionName; 
+				$bookDetails['bookNotes'] = $bookNotes;
+			}
+			
+		}
+		$stmtSelectBooksDetails->close();
+		
+		//echo '<pre>'.print_r($bookDetails, true).'</pre>';
+		return $bookDetails;
+	}
+	
+	
 	/* select all records from table authors
 	 * input parameter $db - connection
 	 * return array like this $authors[$authorId] = $authorName;
 	 * return false if any errors 	 
 	 * */
 	function selectAllAuthors($db) {
+		
 		if (!($stmtSelectAllAuthors = $db->prepare(' SELECT author_name, author_id 
 													  FROM authors
 													 ORDER BY author_name' ))) {
@@ -46,6 +110,69 @@
 		return $authors;
 	}
 	
+	/* select books related to author
+	 * input parameters $db, $authorId
+	 * return array with book's ids
+	 */
+	function findBooksByAuthor($db, $authorId){
+		if($authorId < 0){
+			return false;
+		}
+		
+		if (!($stmtSelectBooksForAuthor = $db->prepare(' SELECT count(book_id)
+													       FROM books_authors
+													 WHERE author_id = '.$authorId ))) {
+			echo ' Prepare select failed: (' . $db->errno . ' ) '  . $db->error;
+			return false;
+		}
+		
+		if (!$stmtSelectBooksForAuthor->execute()) {
+			echo ' Execute select failed: ('  . $stmtSelectBooksForAuthor->errno . ' ) '  . $stmtSelectBooksForAuthor->error;
+			return false;
+		}
+		
+		/* store result */
+		$stmtSelectBooksForAuthor->store_result();
+		
+		/* bind result variables */
+		$stmtSelectBooksForAuthor->bind_result($books);
+		
+		if($stmtSelectBooksForAuthor->num_rows > 0) {
+			while ($row = $stmtSelectBooksForAuthor->fetch()) {
+				$result = $books;
+				return $books;
+			}
+		}
+		
+		$stmtSelectBooksForAuthor->close();
+
+       return 0; 
+	}
+	
+	/* delete author id from table authors
+	 * input parameters - $db, $authorId
+	 * return true if OK,
+	 * return false if errors
+	 */
+	 function deleteAuthors($db, $authorId){
+		
+		if($authorId < 0){
+			return false;
+		}
+		
+		if (!($stmtDelete = $db->prepare("DELETE FROM authors 
+										  WHERE author_id=".$authorId))) {
+			echo "Prepare delete authors failed: (" . $db->errno . ") " . $db->error;
+			return false;
+		}
+
+		if (!$stmtDelete->execute()) {
+			echo "Execute delete authors failed: (" . $stmtDelete->errno . ") " . $stmtDelete->error;
+			return false;
+		}
+		
+		return true;
+	 }
 	
 	/* select all records from table collections
 	 * input parameter $db - connection
@@ -84,7 +211,98 @@
 		return $collections;
 	}
 	
-	//function isAuthorIdExists($db, $ids) {
+	/* delete collection records
+	 * input parameters: $db - connection, $collectionId
+	 * return true if OK
+	 * false if errors
+	 */
+	function deleteCollection($db, $collectionId) {
+		if($collectionId < 0) {
+			return false;
+		}	
+		
+		$books = 0;
+		if (!($stmtSelect = $db->prepare('SELECT count(ca.book_id) 
+											FROM books_authors ba
+											INNER JOIN books_authors ca 
+											ON ba.book_id = ca.book_id
+											WHERE ba.author_id = ca.author_id
+											AND ba.collection_id != ca.collection_id
+											AND ca.collection_id = '.$collectionId ))) {
+			echo ' Prepare select failed: (' . $db->errno . ' ) '  . $db->error;
+			return false;
+		}
+		
+		if (!$stmtSelect->execute()) {
+			echo ' Execute select failed: ('  . $stmtSelect->errno . ' ) '  . $stmtSelect->error;
+			return false;
+		}
+		
+		/* store result */
+		$stmtSelect->store_result();
+		
+		/* bind result variables */
+		$stmtSelect->bind_result($booksCount);
+
+		/* fetch values */
+		if($stmtSelect->num_rows > 0) {
+			while ($row = $stmtSelect->fetch()) {
+				$books = $booksCount; 
+			}
+		}
+		$stmtSelect->close();
+		
+		
+		if($books == 0) {
+			if (!($stmtUpdateRelation = $db->prepare("UPDATE books_authors 
+														 SET collection_id = NULL 
+													   WHERE collection_id=".$collectionId))) {
+				echo "Prepare update books_authors failed: (" . $db->errno . ") " . $db->error;
+				return false;
+			}
+
+			if (!$stmtUpdateRelation->execute()) {
+				echo "Execute update books_authors failed: (" . $stmtUpdateRelation->errno . ") " . $stmtUpdateRelation->error;
+				return false;
+			}
+		} else {
+			// if there are other records in books_authors for the same book, we should delete the record with this collection_id
+			if (!($stmtDeleteRelation = $db->prepare("DELETE FROM books_authors 
+													  WHERE collection_id=".$collectionId))) {
+				echo "Prepare delete books_authors failed: (" . $db->errno . ") " . $db->error;
+				return false;
+			}
+
+			if (!$stmtDeleteRelation->execute()) {
+				echo "Execute delete books_authors failed: (" . $stmtDeleteRelation->errno . ") " . $stmtDeleteRelation->error;
+				return false;
+			}
+		}
+		
+		if (!($stmtDelete = $db->prepare("DELETE FROM collections 
+		                                   WHERE collection_id=".$collectionId))) {
+			echo "Prepare delete collections failed: (" . $db->errno . ") " . $db->error;
+			return false;
+		}
+
+        if (!$stmtDelete->execute()) {
+			echo "Execute delete collections failed: (" . $stmtDelete->errno . ") " . $stmtDelete->error;
+			return false;
+		}
+		
+		return true;
+	}
+	
+	
+	/* check if ids exist in some table
+	 * input parameters
+	 * $db - connection, 
+	 * $table - table name for search, 
+	 * $column - column name consists ids from above table, 
+	 * $ids - array with id values for search
+	 * return true if there are find any records in table equal to input ids
+	 * return false if error
+	 */
 	function isIdsExistsInTable($db, $table, $column, $ids) {
 		if (!is_array($ids)) {
 			return false;
@@ -116,8 +334,8 @@
 	}
 	
 	/*checks if author exists in authors table 
-	 * inputted parameters: $db - connection, $names - array with names of authors
-	 * return true if authors exists
+	 * inputted parameters: $db - connection, $names - array with searchable name values 
+	 * return true if records with searchable values exist
 	 * return false if not
 	 * */
 	function isNameExistsInTable($db, $names, $table, $tableField) {
@@ -181,7 +399,7 @@
 			                                                       a.author_id, 
 			                                                       b.book_id,
 			                                                       ba.collection_id,
-			                                                      -- c.collection_name,
+			                                                       c.collection_name,
 			                                                       b.notes
 			                                                  FROM books_authors as ba
 													    INNER JOIN books as b
@@ -190,8 +408,8 @@
 														 	    ON bba.book_id = ba.book_id
 														INNER JOIN authors as a
 															    ON bba.author_id = a.author_id 
-														/*INNER JOIN collections c
-                                                              ON c.collection_id = ba.collection_id*/
+														LEFT OUTER JOIN collections c
+                                                                ON c.collection_id = ba.collection_id
 														' . $whereStmt 
 													  . ' ORDER BY b.book_title, a.author_name'))) {
 			echo ' Prepare select failed: ('  . $db->errno . ' ) '  . $db->error;
@@ -208,7 +426,7 @@
 		
 		/* bind result variables */
 		$stmtSelectAllBooksByAuthors->bind_result($bookName, $authorName, $authorId, $bookId, 
-			                                      $collectionId, $bookNotes);
+			                                      $collectionId, $collectionName, $bookNotes);
 		
 		/* fetch values */
 		$booksByAuthors = array();
@@ -216,14 +434,9 @@
 			while ($row = $stmtSelectAllBooksByAuthors->fetch()) {
 				$booksByAuthors[$bookId]['bookName'] = $bookName;
 				$booksByAuthors[$bookId]['authors'][$authorId] = $authorName;
+				//$booksByAuthors[$bookId]['collectionName'] = $collectionName;
+				$booksByAuthors[$bookId]['collectionName'][$collectionId] = $collectionName;
 				$booksByAuthors[$bookId]['bookNotes'] = $bookNotes;
-				$collectionName = returnCollectionNameById($db, $collectionId);
-				if ($collectionName !== false) {
-					$booksByAuthors[$bookId]['collectionName'] = $collectionName;
-				}
-				else {
-					$booksByAuthors[$bookId]['collectionName'] = '';
-				}
 			}
 			
 		}
@@ -231,6 +444,105 @@
 		
 		//echo '<pre>'.print_r($booksByAuthors, true).'</pre>';
 		return $booksByAuthors;
+	}
+	
+    /* selects all book_title, author_name, auhtor_id, collection_name, book notes
+	 * by inputted collection ids
+	 * input parameters $db - connection, $collectionIds 
+	 * if $collectionIds is empty select by all collections
+	 * return array of selection 
+	 * return false if any errors
+	 * */
+	function selectAllBooksByCollections($db, $collectionIds) {
+		if (!is_array($collectionIds) || count($collectionIds) <= 0 ) {
+			$whereStmt = '';
+		}
+		if (count($collectionIds)>0){
+			$whereStmt = ' WHERE ba.collection_id IN(' . implode(',', $collectionIds) . ')';
+		}
+		
+		if (!($selectAllBooksByCollections = $db->prepare(' SELECT DISTINCT b.book_title, 
+			                                                       a.author_name, 
+			                                                       a.author_id, 
+			                                                       b.book_id,
+			                                                       ba.collection_id,
+			                                                       c.collection_name,
+			                                                       b.notes
+			                                                  FROM books_authors as ba
+													    INNER JOIN books as b
+														        ON ba.book_id = b.book_id
+														INNER JOIN books_authors as bba
+														 	    ON bba.book_id = ba.book_id
+														INNER JOIN authors as a
+															    ON bba.author_id = a.author_id 
+														LEFT OUTER JOIN collections c
+                                                                ON c.collection_id = ba.collection_id
+														' . $whereStmt 
+													  . ' ORDER BY b.book_title, a.author_name'))) {
+			echo ' Prepare select failed: ('  . $db->errno . ' ) '  . $db->error;
+			return false;
+		}
+		
+		if (!$selectAllBooksByCollections->execute()) {
+			echo ' Execute select failed: ('  . $selectAllBooksByCollections->errno . ' ) '  . $selectAllBooksByCollections->error;
+			return false;
+		}
+		
+		/* store result */
+		$selectAllBooksByCollections->store_result();
+		
+		/* bind result variables */
+		$selectAllBooksByCollections->bind_result($bookName, $authorName, $authorId, $bookId, 
+			                                      $collectionId, $collectionName, $bookNotes);
+		
+		/* fetch values */
+		$booksByCollections = array();
+		if($selectAllBooksByCollections->num_rows > 0) {
+			while ($row = $selectAllBooksByCollections->fetch()) {
+				$booksByCollections[$bookId]['bookName'] = $bookName;
+				$booksByCollections[$bookId]['authors'][$authorId] = $authorName;
+				$booksByCollections[$bookId]['collectionName'][$collectionId] = $collectionName;
+				$booksByCollections[$bookId]['bookNotes'] = $bookNotes;
+			}
+			
+		}
+		$selectAllBooksByCollections->close();
+		
+		//echo '<pre>'.print_r($booksByCollections, true).'</pre>';
+		return $booksByCollections;
+	}
+	
+	/* delete book records
+	 * input parameters
+	 * $db - connection
+	 * $bookDeleteId - book id
+	 */
+	function deleteBook($db, $bookDeleteId){
+		if ($bookDeleteId < 0) {
+			return false;
+		}
+		
+		if (!($stmtDelete = $db->prepare("DELETE FROM books WHERE book_id=".$bookDeleteId))) {
+			echo "Prepare delete books failed: (" . $db->errno . ") " . $db->error;
+			return false;
+		}
+
+        if (!$stmtDelete->execute()) {
+			echo "Execute delete books failed: (" . $stmtDelete->errno . ") " . $stmtDelete->error;
+			return false;
+		}
+		
+		if (!($stmtDeleteRelation = $db->prepare("DELETE FROM books_authors WHERE book_id=".$bookDeleteId))) {
+			echo "Prepare delete books_authors failed: (" . $db->errno . ") " . $db->error;
+			return false;
+		}
+
+        if (!$stmtDeleteRelation->execute()) {
+			echo "Execute delete books_authors failed: (" . $stmtDeleteRelation->errno . ") " . $stmtDeleteRelation->error;
+			return false;
+		}
+		
+		return true;
 	}
 	
 	/* check if field's lenght in interval [$minLenght, $maxLenght]
@@ -291,7 +603,7 @@
 		if ($fieldCateg == 'bookNotes') {
 			//check for lenght
 			if(!checkLenght($fieldValue, 0, 1000)) {
-				$err[] = "Дължината на потребителското име трябва да е между 0 и 1000 символа.";
+				$err[] = "Дължината на забележката трябва да е между 0 и 1000 символа.";
 			}
 		}
 
@@ -328,41 +640,41 @@
 		return $err;
 	}
 	
-	/* check in table users if inputted userName and userPass are exists
-	 * if exists return userId
-	 * else return false
+	/* return bookName value from table books selected by bookId
+	 * if errors return false
 	 * */
-	function checkExisingUser($db, $userName, $userPass) {
+    function returnBookNameById($db, $bookId) {
 		
-		if (strlen($userName) <= 0 || strlen($userPass) <= 0) {
+		if (strlen($bookId) < 0) {
 			return false;
 		}
 		
-		if ( !($stmtIsUserExists = $db->prepare("SELECT user_id 
-			                                       FROM users 
-				                                  WHERE user_name='" . $userName . "' 
-			                                        AND user_pass='" . $userPass . "'" ) )) {
+		$bookIds[] = $bookId;
+		if (isIdsExistsInTable($db, 'books', 'book_id', $bookIds) === true) {
+			if ( !($stmtBookName = $db->prepare("SELECT book_title
+			                                         FROM books 
+			                                        WHERE book_id='" . $bookId . "'") )) {
 				//echo ' Prepare select failed: ('  . $db->errno . ' ) '  . $db->error;
 				return false;
-		}
-			
-		if (!$stmtIsUserExists->execute()) {
-			//echo ' Execute select failed: ('  . $stmtIsNameExists->errno . ' ) '  . $stmtIsNameExists->error;
-			return false;
-		}
-			
-		/* store result */
-		$stmtIsUserExists->store_result();
-			
-		/* bind result variables */
-		$stmtIsUserExists->bind_result($userId);
-			
-		if($stmtIsUserExists->num_rows == 1) {
-			while ($row = $stmtIsUserExists->fetch()) {
-				return $userId;  
 			}
-		}
-		
+			
+			if (!$stmtBookName->execute()) {
+				//echo ' Execute select failed: ('  . $stmtBookName->errno . ' ) '  . $stmtBookName->error;
+				return false;
+			}
+			
+			// store result 
+			$stmtBookName->store_result();
+			
+			// bind result variables 
+			$stmtBookName->bind_result($bookName);
+			
+			if($stmtBookName->num_rows == 1) {
+				while ($row = $stmtBookName->fetch()) {
+					return $bookName;  
+				}
+			}
+	    }
 		return false;
 	}
 	
@@ -443,65 +755,51 @@
 	}
 
 	/* update in table books according to parameters
-	 * input parameters $db - connection, $bookId, $newBookName, $newBookAthors[], $newBookCollection, $newBookNotes 
+	 * input parameters $db - connection, $bookId, $bookName, $bookNotes, $bookCollections, $bookAthors 
+	 * //$newBookDetails['authors'][$authorId] = $authorName;
+	 * //$newBookDetails['collectionName'][$collectionId] = $collectionName; 
 	 * return true if OK
 	 * return false if error 
 	 * */
-	function updateBooks($db, $bookId, $newBookName, $newBookAthorsIds, $newBookCollectionId, $newBookNotes) {
-
-		//$newBookAthorsIds[] = $newBookAthorsId;
-		if ($bookId < 0 || strlen($newBookName) <=0) {
+	function updateBooks($db, $bookId, $bookName, $bookNotes, $bookCollections, $bookAthors) {
+		//echo '<pre>'.print_r($bookCollections, true).'</pre>';
+		//echo '<pre>'.print_r($bookAthors, true).'</pre>';
+		
+		if ((strlen($bookName) <=0 && $bookId <= 0) 
+		    && (is_array($bookCollections) && is_array($bookAthors))){
 			return false;
 		}
-
-		//echo '$bookId = ' . $bookId;
-		if (strlen($newBookName) > 0 ) {
-			if (!($stmtUpdateBookTbl = $db->prepare("UPDATE books 
-				                                        SET book_title = '" . $newBookName . "',
-				                                            notes = '" . $newBookNotes . "'
-				                                      WHERE book_id = " . $bookId ))) {
-				echo "Prepare update with book_title and notes failed: (" . $db->errno . ") " . $db->error;
-				return false;
-			}
-
-			if (!$stmtUpdateBookTbl->execute()) {
-				echo "Execute update book failed: (" . $stmtUpdateBookTbl->errno . ") " . $stmtUpdateBookTbl->error;
-				return false;
-			}
+		
+		// update book title and book notes
+		if (!($stmtUpdate = $db->prepare("UPDATE books SET book_title = '" . $bookName . "', notes = " . (($bookNotes == "NULL") ? "NULL" : "'".$bookNotes."'") . " WHERE book_id=" . $bookId))) {
+			echo "Prepare update with book_title and notes failed: (" . $db->errno . ") " . $db->error;
+			return false;
 		}
 		
- 		if (count($newBookAthorsIds) > 0 ) {
-		   if (!($stmtDeleteRelatedRows = $db->prepare("DELETE FROM books_authors 
-			                                             WHERE book_id = " . $bookId ))) {
-				echo "Prepare delete related rows in books_authors failed: (" . $db->errno . ") " . $db->error;
-				return false;
-			}
-
-			if (!$stmtDeleteRelatedRows->execute()) {
-				echo "Execute delete related rows in books_authors failed: (" . $stmtDeleteRelatedRows->errno . ") " . $stmtDeleteRelatedRows->error;
-				return false;
-			}
-
-			foreach ($newBookAthorsIds as $key => $author) {
-				// insert new related rows based by new authors and collections
-				if (!($stmtInsertRelatedTbl = $db->prepare("INSERT INTO books_authors 
-					                                            (book_id, author_id, collection_id)
-				                                          VALUES(" . $bookId . " , " . $author . " , " . $newBookCollectionId . ")" 
-				                                          ))) {
-					echo "Prepare insert related rows in books_authors failed: (" . $db->errno . ") " . $db->error;
-					return false;
-				}
-
-				if (!$stmtInsertRelatedTbl->execute()) {
-					echo "Execute related rows in books_authors failed: (" . $stmtInsertRelatedTbl->errno . ") " . $stmtInsertRelatedTbl->error;
+		if (!$stmtUpdate->execute()) {
+			echo "Execute update book failed: (" . $stmtUpdate->errno . ") " . $stmtUpdate->error;
+			return false;
+		}
+		
+		if ( count($bookCollections) >0 || count($bookAthors) > 0) {
+			// for update of relations in books_authors we need to delete old records and insert the new ones
+			if (deleteRelationBookAuthorCollection($db, $bookId) === true) {
+				$results = insertRelationBookAuthorCollection($db, $bookId, $bookAthors, $bookCollections);
+				
+				if (count($results) <= 0) {
+					echo "Error on insert in books_authors.";
 					return false;
 				}
 			}
+			else {
+				echo "Error on delete books_authors.";
+				return false;
+			}
 		}
-		
-		return true;
+		return true;		
 	}
 	
+
 	/* update collectionName in table collections by collectionId
 	 * return true if no errors
 	 * */
@@ -515,17 +813,17 @@
 			}
 			
 			if (!$stmtInput->execute()) {
-				echo "Execute insert failed: (" . $stmtInput->errno . ") " . $stmtInput->error;
+				//echo "Execute insert failed: (" . $stmtInput->errno . ") " . $stmtInput->error;
 				return false;
 			}
 			
 			return true;
 		}
 		else {
-			echo 'Error in isNameExistsInTable';
+			//echo 'Error in isNameExistsInTable';
 			return false;
 		}
-		echo 'General error';
+		//echo 'General error';
 		return false;
 		
 	}
@@ -538,38 +836,47 @@
 		$authorIds[] = $authorId;
 		if (isNameExistsInTable($db, $authorIds, 'authors', 'author_id') === true) {
 			if (!($stmtInput = $db->prepare("UPDATE authors SET author_name = '" . $authorName . "' WHERE author_id = " . $authorId))) {
-				echo "Prepare insert failed: (" . $db->errno . ") " . $db->error;
+				//echo "Prepare insert failed: (" . $db->errno . ") " . $db->error;
 				return false;
 			}
 			
 			if (!$stmtInput->execute()) {
-				echo "Execute insert failed: (" . $stmtInput->errno . ") " . $stmtInput->error;
+				//echo "Execute insert failed: (" . $stmtInput->errno . ") " . $stmtInput->error;
 				return false;
 			}
 			
 			return true;
 		}
 		else {
-			echo 'Error in isNameExistsInTable';
+			//echo 'Error in isNameExistsInTable';
 			return false;
 		}
-		echo 'General error';
+		//echo 'General error';
 		return false;
 		
 	}
 
 	/* insert in table books according to parameters
-	 * input parameters $db - connection, $bookName, $bookNotes, $bookCollection 
+	 * input parameters $db - connection, $bookName, $bookNotes
 	 * return inserted id if OK
 	 * return false if error 
 	 * */
 	function insertBooks($db, $bookName, $bookNotes) {
 		
+		$insert='';
+		
 		if (strlen($bookName) <=0) {
 			return false;
 		}
 		
-		if (!($stmtInput = $db->prepare("INSERT INTO books(book_title, notes) VALUES ('" . $bookName . "','" . $bookNotes . "')"))) {
+		if (strlen($bookNotes) <= 0) {
+			$insert="INSERT INTO books(book_title) VALUES ('" . $bookName . "')";
+		}
+		else {
+			$insert="INSERT INTO books(book_title, notes) VALUES ('" . $bookName . "','" . $bookNotes . "')";
+		}
+		
+		if (!($stmtInput = $db->prepare($insert))) {
 			//echo "Prepare insert failed: (" . $db->errno . ") " . $db->error;
 			return false;
 		}
@@ -624,126 +931,93 @@
 	 * input parameters $db - connection, 
 	 * $newBookId - book_id, 
 	 * $selectedAuthorIds - array of values with author_id
-	 * $bookCollectionId - array of values with collection_id
+	 * $bookCollectionIds - array of values with collection_id
 	 * return array with inserted ids if OK
 	 * return false if errors 
 	 * */
-	function insertRelationBookAuthor($db, $newBookId, $selectedAuthorIds, $bookCollectionId) {
-	
-		if ($newBookId < 0 || count($selectedAuthorIds) <= 0 || $bookCollectionId < 0) {
+	function insertRelationBookAuthorCollection($db, $newBookId, $selectedAuthorIds, $bookCollectionIds) {
+	/*
+		 echo "book id= " . $newBookId;
+		 echo 'authors id= <pre>'.print_r($selectedAuthorIds, true).'</pre>' . 'count='.count($selectedAuthorIds); 
+		 echo 'collections id= <pre>'.print_r($bookCollectionIds, true).'</pre>';
+	*/	
+		
+		 if ($newBookId < 0 || count($selectedAuthorIds) <= 0) {
 			return false;
 		}
 		
 		$insertedIds = array();
-
-		//echo '<pre>'.print_r($bookCollectionId, true).'</pre>';
 		
-		for($i=0;$i<count($selectedAuthorIds);$i++) {
-			if (!($stmtInputRelation = $db->prepare("INSERT INTO books_authors(author_id, book_id, collection_id) 
-															VALUES (?, ?, ?)"))) {
-				//echo "Prepare insert books_authors failed: (" . $db->errno . ") " . $db->error;
-				return false;
-			}
+		if (count($bookCollectionIds) >0 ) {
+			for($i=0;$i<count($selectedAuthorIds);$i++) {
+				for($j=0;$j<count($bookCollectionIds);$j++) {
 			
-			if (!$stmtInputRelation->bind_param("ddd", $selectedAuthorIds[$i], $newBookId, $bookCollectionId)) {
-				//echo "Binding insert books_authors parameters failed: (" . $stmtInputRelation->errno . ") " . $stmtInputRelation->error;
-				return false;
+					if (!($stmtInputRelation = $db->prepare("INSERT INTO books_authors(author_id, book_id, collection_id) 
+																	VALUES (?, ?, ?)"))) {
+						//echo "Prepare insert books_authors failed: (" . $db->errno . ") " . $db->error;
+						return false;
+					}
+					
+					if (!$stmtInputRelation->bind_param("iii", $selectedAuthorIds[$i], $newBookId, $bookCollectionIds[$j])) {
+						//echo "Binding insert books_authors parameters failed: (" . $stmtInputRelation->errno . ") " . $stmtInputRelation->error;
+						return false;
+					}
+					if (!$stmtInputRelation->execute()) {
+						//echo "Execute insert books_authors failed: (" . $stmtInputRelation->errno . ") " . $stmtInputRelation->error;
+						return false;
+					}
+				
+					$insertedIds[] = $stmtInputRelation->insert_id;
+				}
 			}
-			if (!$stmtInputRelation->execute()) {
-				//echo "Execute insert books_authors failed: (" . $stmtInputRelation->errno . ") " . $stmtInputRelation->error;
-				return false;
-			}
+		}
+		else {
+			for($i=0;$i<count($selectedAuthorIds);$i++) {
+				if (!($stmtInputRelation = $db->prepare("INSERT INTO books_authors(author_id, book_id) 
+																VALUES (?, ?)"))) {
+					//echo "Prepare insert books_authors failed: (" . $db->errno . ") " . $db->error;
+					return false;
+				}
+				
+				if (!$stmtInputRelation->bind_param("ii", $selectedAuthorIds[$i], $newBookId)) {
+					//echo "Binding insert books_authors parameters failed: (" . $stmtInputRelation->errno . ") " . $stmtInputRelation->error;
+					return false;
+				}
+				if (!$stmtInputRelation->execute()) {
+					//echo "Execute insert books_authors failed: (" . $stmtInputRelation->errno . ") " . $stmtInputRelation->error;
+					return false;
+				}
 			
-			$insertedIds[] = $stmtInputRelation->insert_id;
+				$insertedIds[] = $stmtInputRelation->insert_id;
+			}
 		}
 		
 		return $insertedIds;
 	}
+
 	
-	function insertNewUser($db, $userName, $userPass) {
-		
-		if (strlen($userName) <=0 || strlen($userPass) <= 0) {
+	/* delete records in table books_authors 
+	 * input parameters $db - connection, 
+	 * $bookId - book_id, 
+	 * return true if OK
+	 * return false if errors 
+	 * */
+	function deleteRelationBookAuthorCollection($db, $bookId) {
+
+		if ($bookId < 0) {
 			return false;
 		}
 		
-		if (!($stmtInput = $db->prepare("INSERT INTO users(user_name, user_pass) 
-										      VALUES ('" . $userName . "', '" . $userPass . "')"))) {
-			//echo "Prepare insert failed: (" . $db->errno . ") " . $db->error;
+		if (!($stmtDeleteRelation = $db->prepare("DELETE FROM books_authors WHERE book_id=".$bookId))) {
+			//echo "Prepare delete books_authors failed: (" . $db->errno . ") " . $db->error;
+			return false;
+		}
+
+        if (!$stmtDeleteRelation->execute()) {
+			//echo "Execute delete books_authors failed: (" . $stmtDeleteRelation->errno . ") " . $stmtDeleteRelation->error;
 			return false;
 		}
 		
-		if (!$stmtInput->execute()) {
-			//echo "Execute insert failed: (" . $stmtInput->errno . ") " . $stmtInput->error;
-			return false;
-		}
-		
-		return $stmtInput->insert_id;;
-	}
-	
-	function getAllMessages($db, $bookId) {
-		if (!is_array($bookId) || count($bookId) <= 0) {
-			return false;
-		}
-		
-		if (!($stmtSelectAllMsg = $db->prepare("SELECT m.msg_title, m.msg_text, m.msg_date, u.user_name
-		                                          FROM messages m, users u
-		                                         WHERE m.msg_user = u.user_id
-												   AND m.book_id IN('" . implode(',', $bookId) . "')
-		                                         ORDER BY msg_date DESC"))) {
-			//echo ' Prepare select failed: ('  . $db->errno . ' ) '  . $db->error;
-			return false;
-		}
-		
-		if (!$stmtSelectAllMsg->execute()) {
-			//echo ' Execute select failed: ('  . $stmtSelectAllBooksByAuthors->errno . ' ) '  . $stmtSelectAllBooksByAuthors->error;
-			return false;
-		}
-		
-		/* store result */
-		$stmtSelectAllMsg->store_result();
-		
-		/* bind result variables */
-		$stmtSelectAllMsg->bind_result($msgTitle, $msgText, $msgDate, $msgUserName);
-		
-		/* fetch values */
-		$messages = array();
-		if($stmtSelectAllMsg->num_rows > 0) {
-			$i=0;
-			while ($row = $stmtSelectAllMsg->fetch()) {
-				$messages[$i]['msgTitle'] = $msgTitle;
-				$messages[$i]['msgText'] = $msgText;
-				$messages[$i]['msgDate'] = $msgDate;
-				$messages[$i]['msgUserName'] = $msgUserName;
-				$i++;
-			}
-			
-		}
-		$stmtSelectAllMsg->close();
-		
-		//echo '<pre>'.print_r($messages, true).'</pre>';
-		return $messages;
-	}
-	
-	function insertNewMessage($db, $msgTitle, $msgText, $msgUser, $bookId) {
-		if (strlen($msgTitle) <=1 || strlen($msgText) <=1 || $msgUser <0 || $bookId < 0) {
-			return false;
-		}
-		
-		if (!($stmtInsertMsg = $db->prepare("INSERT INTO messages(msg_title, msg_text, msg_user, book_id) 
-		                                            VALUES(?, ?, ?, ?)"))) {
-			echo "Prepare insert books_authors failed: (" . $db->errno . ") " . $db->error;
-			return false;
-		}
-		
-		if (!$stmtInsertMsg->bind_param("ssii", $msgTitle, $msgText, $msgUser, $bookId)) {
-			echo "Binding insert books_authors parameters failed: (" . $stmtInsertMsg->errno . ") " . $stmtInsertMsg->error;
-			return false;
-		}
-		if (!$stmtInsertMsg->execute()) {
-			echo "Execute insert books_authors failed: (" . $stmtInsertMsg->errno . ") " . $stmtInsertMsg->error;
-			return false;
-		}
-		
-		return $stmtInsertMsg->insert_id;
+		return true;
 	}
 ?>
